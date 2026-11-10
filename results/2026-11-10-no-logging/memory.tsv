@@ -1,0 +1,4 @@
+target	mem_usage	mem_pct	cpu_pct	pids
+snails-no-logging	31.06MiB / 14.92GiB	0.20%	1.16%	23
+rails-cluster-no-logging	874.6MiB / 14.92GiB	5.73%	0.08%	146
+rails-default-no-logging	133.4MiB / 14.92GiB	0.87%	0.01%	10

@@ -1,0 +1,20 @@
+# Build outputs and runtime state — regenerated, never source.
+/apps/snails/snails-core/
+/apps/snails/.spinel/
+/apps/snails/build/
+/apps/snails/storage/
+/apps/snails/tmp/
+/apps/snails/.env
+/apps/snails/harness/build/
+/apps/snails/harness/storage/
+/apps/rails-api/tmp/
+/apps/rails-api/log/
+/apps/rails-api/storage/
+/apps/rails-api/.bundle/
+/apps/rails-api/vendor/bundle/
+/apps/rails-api/config/master.key
+/apps/rails-api/config/credentials.yml.enc
+
+# Results: the measured numbers are the evidence for what the README claims, so
+# the two small tables are committed and the bulky k6 output is not.
+/results/*/raw/

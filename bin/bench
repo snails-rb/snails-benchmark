@@ -1,0 +1,337 @@
+#!/bin/bash
+# Measure GET /up throughput for baseline, Snails and Rails on this host.
+#
+# One command runs the whole suite: every target starts in its own container on
+# its own port, the VU levels are swept, and the rounds are interleaved across
+# targets so a slow drift in the machine hits all of them equally.
+#
+# The load generator is pinned to its own cores. Without that split the
+# generator and the server fight for the same cores and the server's share
+# shrinks as load rises, which is what makes a same-host comparison misleading.
+#
+# Usage: bin/bench [options]
+#
+#   --targets LIST    comma-separated subset of TARGETS (default: all)
+#   --vus LIST        comma-separated concurrency levels (default: 8,32,64,128)
+#   --duration SEC    seconds per measurement (default: 20s)
+#   --repeat N        rounds over every target and VU level (default: 3)
+#   --build           rebuild both app images first
+#   --server-cpus S   coreset for the server containers (default: all but load)
+#   --load-cpus S     coreset for the generator (default: first 4 cores)
+#   --out DIR         result directory (default: results/<UTC timestamp>)
+#
+# Exit: 0 when every measurement ran and no request failed; 1 otherwise.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HARNESS="$ROOT/harness/up.js"
+OUT="${OUT:-}"
+
+TARGETS="baseline,snails,snails-single-worker,rails-default,rails-cluster"
+VUS_LIST="8,32,64,128"
+DURATION="20s"
+REPEAT=3
+BUILD=0
+
+# One port per target. Fixed rather than dynamic so a failed start names the
+# port a reader can probe.
+declare -A PORTS=(
+  [baseline]=18080
+  [snails]=18081
+  [snails-single-worker]=18082
+  [rails-default]=18083
+  [rails-cluster]=18084
+  [snails-no-logging]=18085
+  [rails-default-no-logging]=18086
+  [rails-cluster-no-logging]=18087
+)
+
+usage() {
+  # The header comment is the help text; printing it straight means the two
+  # cannot drift apart.
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"
+}
+
+while (($#)); do
+  case "$1" in
+    --targets)  TARGETS="${2:?--targets needs a list}"; shift 2 ;;
+    --vus)      VUS_LIST="${2:?--vus needs a list}"; shift 2 ;;
+    --duration) DURATION="${2:?--duration needs a value}"; shift 2 ;;
+    --repeat)   REPEAT="${2:?--repeat needs a number}"; shift 2 ;;
+    --build)    BUILD=1; shift ;;
+    --server-cpus) SERVER_CPUS="${2:?}"; shift 2 ;;
+    --load-cpus)   LOAD_CPUS="${2:?}"; shift 2 ;;
+    --out)      OUT="${2:?--out needs a path}"; shift 2 ;;
+    -h|--help)  usage; exit 0 ;;
+    *) echo "bin/bench: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+TOTAL_CPUS="$(nproc)"
+for cmd in docker jq curl taskset; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "bin/bench: $cmd is required" >&2
+    exit 1
+  }
+done
+if (( TOTAL_CPUS < 8 )); then
+  echo "bin/bench: needs at least 8 cores to separate load from server (found $TOTAL_CPUS)" >&2
+  exit 1
+fi
+LOAD_CPUS="${LOAD_CPUS:-0-3}"
+SERVER_CPUS="${SERVER_CPUS:-4-$((TOTAL_CPUS - 1))}"
+SERVER_CORE_COUNT=$(( TOTAL_CPUS - 4 ))
+OUT="${OUT:-$ROOT/results/$(date -u +%Y%m%dT%H%M%SZ)}"
+
+mkdir -p "$OUT/raw"
+
+# k6 from mise keeps the generator version constant; the pinned minor is the
+# one the earlier staging measurements used.
+if mise exec k6@2.3.0 -- k6 version >/dev/null 2>&1; then
+  K6_LOCAL="mise exec k6@2.3.0 --"
+else
+  echo "bin/bench: k6 not available through mise; install it with 'mise use -g k6@2.3.0'" >&2
+  exit 1
+fi
+
+run_k6() {
+  local url="$1" vus="$2" name="$3"
+  local export="$OUT/raw/$name.json"
+  # shellcheck disable=SC2086
+  taskset -c "$LOAD_CPUS" $K6_LOCAL k6 run \
+    -e VUS="$vus" -e DURATION="$DURATION" -e URL="$url" \
+    --quiet --no-color --summary-mode compact \
+    --summary-export "$export" "$HARNESS" >"$OUT/raw/$name.log" 2>&1
+}
+
+# Peak memory while a load runs, from the container's cgroup counter. One
+# reading at the end of a run shows retained memory, not what the app actually
+# needed under load — an app can release a large burst before the reading. The
+# sampler polls often enough to catch a peak that lasts a few hundred ms.
+#
+# Writes bytes to stdout. The counter is read inside the container because the
+# cgroup path differs between drivers.
+sample_peak_memory() {
+  local target="$1" samples="$2" interval="$3"
+  docker exec "bench-$target" sh -c "
+    i=0; peak=0
+    while [ \$i -lt $samples ]; do
+      v=\$(cat /sys/fs/cgroup/memory.current 2>/dev/null || cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo 0)
+      [ \"\$v\" -gt \"\$peak\" ] && peak=\$v
+      i=\$((i + 1))
+      sleep $interval
+    done
+    echo \$peak
+  " 2>/dev/null || echo 0
+}
+
+# Start a sampler in the background; its peak lands in $PEAK_FILE.
+# Sets a variable rather than printing a path: command substitution would
+# capture the background job's inherited stdout and block until the sampler
+# finished, turning a parallel measurement into a serial one.
+start_memory_sampler() {
+  local target="$1" duration_s="$2"
+  PEAK_FILE="/tmp/bench-peak-$target"
+  rm -f "$PEAK_FILE"
+  # 50ms is fine-grained enough for a peak and cheap enough not to disturb the
+  # measurement: one `cat` on a cgroup file per tick.
+  local ticks=$(( duration_s * 20 ))
+  ( sample_peak_memory "$target" "$ticks" 0.05 >"$PEAK_FILE" ) &
+  SAMPLER_PID=$!
+}
+
+wait_for_up() {
+  local target="$1" port="$2" i
+  for ((i = 0; i < 90; i++)); do
+    if curl -fsS "http://127.0.0.1:$port/up" >/dev/null 2>&1; then
+      return 0
+    fi
+    # A container that exited cannot become ready; fail fast instead of
+    # waiting out the whole timeout.
+    if [[ -z $(docker ps --filter "name=^bench-$target$" --format '{{.Names}}') ]]; then
+      return 1
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+start_target() {
+  local target="$1" port="${PORTS[$1]:-}"
+  [[ -n $port ]] || { echo "bin/bench: unknown target: $target" >&2; return 1; }
+  docker rm -f "bench-$target" >/dev/null 2>&1 || true
+  case "$target" in
+    baseline)
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -p "127.0.0.1:$port:3000" \
+        -v "$ROOT/baseline/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+        nginx:alpine >/dev/null
+      ;;
+    snails)
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -p "127.0.0.1:$port:3000" snails:bench >/dev/null
+      ;;
+    snails-single-worker)
+      # SPINEL_WORKERS=1 reproduces the older 1-vCPU condition: main runs every
+      # connection thread itself, one OS worker in all.
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -e SPINEL_WORKERS=1 \
+        -p "127.0.0.1:$port:3000" snails:bench >/dev/null
+      ;;
+    rails-default)
+      # `rails new` defaults: one process, five threads.
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=5 \
+        -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
+        -p "127.0.0.1:$port:3000" rails-api:bench >/dev/null
+      ;;
+    rails-cluster)
+      # One worker per server core: what it takes for CRuby to use the cores,
+      # because a worker's threads share one GVL.
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -e WEB_CONCURRENCY="$SERVER_CORE_COUNT" -e RAILS_MAX_THREADS=5 \
+        -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
+        -p "127.0.0.1:$port:3000" rails-api:bench >/dev/null
+      ;;
+    snails-no-logging)
+      # Same app with the per-request log line suppressed, at the same worker
+      # count as `snails`. The difference against `snails` is the logging cost,
+      # which is the second variable this suite separates.      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -e SNAILS_LOG_LEVEL=fatal \
+        -p "127.0.0.1:$port:3000" snails:bench >/dev/null
+      ;;
+    rails-default-no-logging)
+      # The `rails-default` shape with log output off.
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=5 \
+        -e RAILS_LOG_LEVEL=fatal \
+        -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
+        -p "127.0.0.1:$port:3000" rails-api:bench >/dev/null
+      ;;
+    rails-cluster-no-logging)
+      # The `rails-cluster` shape with log output off.
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+        -e WEB_CONCURRENCY="$SERVER_CORE_COUNT" -e RAILS_MAX_THREADS=5 \
+        -e RAILS_LOG_LEVEL=fatal \
+        -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
+        -p "127.0.0.1:$port:3000" rails-api:bench >/dev/null
+      ;;
+  esac
+  wait_for_up "$target" "$port"
+}
+
+stop_target() {
+  docker rm -f "bench-$1" >/dev/null 2>&1 || true
+}
+
+if (( BUILD )); then
+  echo "[bench] building images"
+  ( cd "$ROOT/apps/snails" && bin/build-image --tag bench >/dev/null )
+  ( cd "$ROOT/apps/rails-api" && docker build -q -t rails-api:bench . >/dev/null )
+fi
+
+echo "[bench] host: $TOTAL_CPUS cores, servers on $SERVER_CPUS, load on $LOAD_CPUS"
+echo "[bench] duration: $DURATION, rounds: $REPEAT, VUs: $VUS_LIST"
+echo "[bench] results: $OUT"
+
+FAILED=0
+SUMMARY="$OUT/summary.tsv"
+printf 'target\tvus\tround\trps\tp50_ms\tp95_ms\tp99_ms\tfailed_pct\tpeak_mib\n' >"$SUMMARY"
+
+RUNNING=()
+cleanup() {
+  for t in "${RUNNING[@]:-}"; do
+    [[ -n $t ]] && stop_target "$t"
+  done
+}
+trap cleanup EXIT
+
+for target in ${TARGETS//,/ }; do
+  echo "[bench] starting $target"
+  if ! start_target "$target"; then
+    echo "[bench] $target did not become ready — skipping" >&2
+    docker logs "bench-$target" 2>&1 | tail -5 >&2 || true
+    stop_target "$target"
+    FAILED=1
+    continue
+  fi
+  RUNNING+=("$target")
+  # Warmup: the first seconds of a run measure boot-side laziness (allocator
+  # growth, page cache), not steady state.
+  run_k6 "http://127.0.0.1:${PORTS[$target]}/up" 8 "warmup-$target" || true
+done
+
+sleep 3
+
+# Rounds are the outer loop so every target sees the same machine state within
+# a round: a slow drift (thermal, background job) hits all of them equally.
+for ((round = 1; round <= REPEAT; round++)); do
+  for vus in ${VUS_LIST//,/ }; do
+    for target in ${TARGETS//,/ }; do
+      port="${PORTS[$target]:-}"
+      [[ -n $port ]] || continue
+      [[ -n $(docker ps --filter "name=^bench-$target$" --format '{{.Names}}') ]] || continue
+      name="$target-vus$vus-round$round"
+      # Peak memory is sampled while the load runs; a reading after it stops
+      # would show what the app kept, which is a different question.
+      start_memory_sampler "$target" "${DURATION%s}"
+      if ! run_k6 "http://127.0.0.1:$port/up" "$vus" "$name"; then
+        echo "[bench] $name failed — see raw/$name.log" >&2
+        wait "$SAMPLER_PID" 2>/dev/null || true
+        rm -f "$PEAK_FILE"
+        FAILED=1
+        continue
+      fi
+      wait "$SAMPLER_PID" 2>/dev/null || true
+      peak_bytes="$(cat "$PEAK_FILE" 2>/dev/null || echo 0)"
+      rm -f "$PEAK_FILE"
+      peak_mib=$(( peak_bytes / 1048576 ))
+      read -r rps p50 p95 p99 failed < <(
+        jq -r '[
+          .metrics.http_reqs.rate,
+          .metrics.http_req_duration["p(50)"],
+          .metrics.http_req_duration["p(95)"],
+          .metrics.http_req_duration["p(99)"],
+          (.metrics.http_req_failed.value * 100)
+        ] | @tsv' "$OUT/raw/$name.json"
+      )
+      printf '%s\t%s\t%s\t%.1f\t%.2f\t%.2f\t%.2f\t%.2f\t%s\n' \
+        "$target" "$vus" "$round" "$rps" "$p50" "$p95" "$p99" "$failed" "$peak_mib" >>"$SUMMARY"
+      printf '  %-22s round=%s vus=%-4s %9.1f rps  p50=%6.2fms p95=%8.2fms  peak=%4s MiB\n' \
+        "$target" "$round" "$vus" "$rps" "$p50" "$p95" "$peak_mib"
+    done
+  done
+done
+
+# Memory is a separate gauge, not a throughput number: one reading per target
+# after the load, while it still holds what it allocated. It is saved to
+# memory.tsv because the "how much RAM does this cost" question is asked on its
+# own, separately from requests per second.
+echo
+echo "[bench] memory after load (docker stats working set, host memory %)"
+printf 'target\tmem_usage\tmem_pct\tcpu_pct\tpids\n' >"$OUT/memory.tsv"
+for target in "${RUNNING[@]:-}"; do
+  [[ -n $target ]] || continue
+  # One reading, printed and saved: two `docker stats` calls would read two
+  # different moments and the saved row would not match the printed one.
+  row="$(docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}\t{{.PIDs}}' "bench-$target" 2>/dev/null || true)"
+  [[ -n $row ]] || continue
+  # Store the target name, not the container name: the container prefix is an
+  # implementation detail of this script, not something a reader looks up.
+  row="${target}"$'\t'"$(printf '%s' "$row" | cut -f2-)"
+  printf '  %-28s %-22s %s CPU  pids %s\n' "$target" \
+    "$(printf '%s' "$row" | cut -f2)" "$(printf '%s' "$row" | cut -f4)" "$(printf '%s' "$row" | cut -f5)"
+  printf '%s\n' "$row" >>"$OUT/memory.tsv"
+done
+
+echo
+# One implementation of the median table: bin/report reads the same summary, so
+# a finished run can be re-read without measuring again.
+"$ROOT/bin/report" "$OUT"
+
+echo
+echo "[bench] raw: $OUT/raw, table: $SUMMARY"
+if (( FAILED )); then
+  echo "[bench] at least one measurement failed" >&2
+  exit 1
+fi

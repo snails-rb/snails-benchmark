@@ -1,0 +1,56 @@
+#!/bin/bash
+# Print the image size of each benchmark app in MiB, and save the byte counts.
+#
+# Image size is what a deploy ships, not something the load generator measures,
+# so it is read from the built images rather than from a run. MiB is used
+# because the other numbers in the results tables are memory in MiB; note that
+# `docker images` shows decimal MB, which is why its figure is larger.
+#
+# Usage: bin/imagesize [--out DIR]
+#
+#   --out DIR   directory to write sizes.tsv into (default: none, print only)
+#
+# Exit: 0 when both images exist; 1 when one is missing.
+set -euo pipefail
+
+OUT=""
+
+while (($#)); do
+  case "$1" in
+    --out) OUT="${2:?--out needs a path}"; shift 2 ;;
+    -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "bin/imagesize: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+IMAGES="snails:bench rails-api:bench"
+for image in $IMAGES; do
+  docker image inspect "$image" >/dev/null 2>&1 || {
+    echo "bin/imagesize: $image not built (run bin/bench --build first)" >&2
+    exit 1
+  }
+done
+
+rows="$(
+  for image in $IMAGES; do
+    bytes="$(docker image inspect "$image" --format '{{.Size}}')"
+    # Integer arithmetic: bash has no floating point and awk's default rounding
+    # would hide a MiB either way.
+    printf '%s\t%s\t%s\n' "$image" "$bytes" "$(( bytes / 1048576 ))"
+  done
+)"
+
+printf '%-18s %14s %10s\n' image bytes size_mib
+printf '%s\n' "$rows" | while IFS=$'\t' read -r image bytes mib; do
+  printf '%-18s %14s %10s\n' "$image" "$bytes" "$mib"
+done
+
+if [[ -n $OUT ]]; then
+  mkdir -p "$OUT"
+  {
+    printf 'image\tbytes\tsize_mib\n'
+    printf '%s\n' "$rows"
+  } >"$OUT/sizes.tsv"
+  echo
+  echo "saved: $OUT/sizes.tsv"
+fi

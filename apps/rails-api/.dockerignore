@@ -1,0 +1,12 @@
+# Keep the build context to source: build outputs, local state, and VCS/CI
+# metadata never reach the image.
+.git
+.github
+tmp/
+log/
+storage/
+.bundle/
+vendor/bundle/
+node_modules/
+config/master.key
+config/credentials.yml.enc

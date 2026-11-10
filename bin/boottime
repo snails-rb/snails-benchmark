@@ -1,0 +1,167 @@
+#!/bin/bash
+# Measure what a cold start costs: time from launching the app to answering GET
+# /up, and the memory it sits on once idle.
+#
+# Neither is a throughput number. Boot time is what a deploy, a restart, or a
+# scale-out event costs; idle memory is what it costs to keep the app up.
+#
+# The timer runs inside the container so only the app's own work is on the
+# clock, not image pull or container creation. The API server is replaced by a
+# shell that starts the real server in the background, because timing has to
+# begin before the server does and stop at its first answer.
+#
+# Rounds interleave the targets (one attempt each per round) rather than
+# measuring one target's every attempt first: a warm page cache helps whichever
+# target runs second, and interleaving spreads that evenly.
+#
+# Usage: bin/boottime [--repeat N] [--targets LIST] [--cpus S] [--out DIR]
+#
+#   --repeat N        rounds per target (default: 5, median reported)
+#   --targets LIST    subset of snails,rails-default,rails-cluster (default: all)
+#   --cpus S          coreset for the container (default: 4-15)
+#   --out DIR         result directory; writes boot.tsv and rounds.txt into it
+#
+# Exit: 0 when every attempt answered; 1 otherwise.
+set -euo pipefail
+
+REPEAT=5
+TARGETS="snails,rails-default,rails-cluster"
+CPUS="${SERVER_CPUS:-4-15}"
+OUT=""
+
+# A fixed dummy key: the Rails app needs one to boot in production mode and this
+# measurement never leaves the machine.
+SECRET="boot-check-only-not-a-deployment-secret-000000000000000000"
+
+while (($#)); do
+  case "$1" in
+    --repeat)  REPEAT="${2:?--repeat needs a number}"; shift 2 ;;
+    --targets) TARGETS="${2:?--targets needs a list}"; shift 2 ;;
+    --cpus)    CPUS="${2:?--cpus needs a coreset}"; shift 2 ;;
+    --out)     OUT="${2:?--out needs a path}"; shift 2 ;;
+    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "bin/boottime: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+# Wrapper script the container runs instead of its CMD. `$1` is the server
+# command; the elapsed milliseconds land in /tmp/boot_ms for the host to read.
+# The container then waits, so the host can read memory from the same process.
+READY_WRAPPER='
+  start=$(date +%s%N)
+  exec_cmd="$1"
+  sh -c "$exec_cmd" >/dev/null 2>&1 &
+  until curl -fsS http://127.0.0.1:3000/up >/dev/null 2>&1; do :; done
+  end=$(date +%s%N)
+  echo $(( (end - start) / 1000000 )) >/tmp/boot_ms
+  wait
+'
+
+start_container() {
+  local target="$1" name="boot-$1"
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  case "$target" in
+    snails)
+      docker run -d --name "$name" --cpuset-cpus "$CPUS" \
+        --entrypoint sh snails:bench -c "$READY_WRAPPER" sh /usr/local/bin/app >/dev/null
+      ;;
+    rails-default)
+      docker run -d --name "$name" --cpuset-cpus "$CPUS" \
+        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=5 -e SECRET_KEY_BASE="$SECRET" \
+        --entrypoint sh rails-api:bench -c "$READY_WRAPPER" sh "bundle exec puma -C config/puma.rb" >/dev/null
+      ;;
+    rails-cluster)
+      # Rails in the shape it needs to use several cores: one worker per core.
+      # Every worker is a process a deployment pays memory for.
+      docker run -d --name "$name" --cpuset-cpus "$CPUS" \
+        -e WEB_CONCURRENCY=12 -e RAILS_MAX_THREADS=5 -e SECRET_KEY_BASE="$SECRET" \
+        --entrypoint sh rails-api:bench -c "$READY_WRAPPER" sh "bundle exec puma -C config/puma.rb" >/dev/null
+      ;;
+    *) echo "bin/boottime: unknown target: $target" >&2; return 1 ;;
+  esac
+}
+
+# Boot milliseconds as the container measured them, or empty while it boots.
+boot_ms_of() {
+  docker exec "boot-$1" cat /tmp/boot_ms 2>/dev/null || true
+}
+
+# Idle memory, read the same way for every target so the numbers are comparable:
+# the container's working set after a second of sitting still.
+idle_mib_of() {
+  docker stats --no-stream --format '{{.MemUsage}}' "boot-$1" 2>/dev/null | cut -d/ -f1 | tr -d ' '
+}
+
+wait_for_boot() {
+  local target="$1" i
+  for ((i = 0; i < 1200; i++)); do
+    if [[ -n $(boot_ms_of "$target") ]]; then
+      return 0
+    fi
+    if [[ -z $(docker ps --filter "name=^boot-$target$" --format '{{.Names}}') ]]; then
+      return 1
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+median_of() { sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) print "nan"; else print v[int((NR + 1) / 2)] }'; }
+
+# Results are saved because a run's numbers are the evidence for whatever quotes
+# them; a printed table nobody kept cannot be re-read.
+if [[ -n $OUT ]]; then
+  mkdir -p "$OUT"
+  printf 'target\tboot_ms\tidle_mib\n' >"$OUT/boot.tsv"
+  : >"$OUT/rounds.txt"
+fi
+
+FAILED=0
+for target in ${TARGETS//,/ }; do
+  : >"/tmp/boottime-$target.ms"
+  : >"/tmp/boottime-$target.mib"
+done
+
+for ((round = 1; round <= REPEAT; round++)); do
+  for target in ${TARGETS//,/ }; do
+    start_container "$target"
+    if ! wait_for_boot "$target"; then
+      echo "  $target round=$round did not answer — see docker logs boot-$target" >&2
+      FAILED=1
+      docker rm -f "boot-$target" >/dev/null 2>&1 || true
+      continue
+    fi
+    sleep 1
+    ms="$(boot_ms_of "$target")"
+    mib="$(idle_mib_of "$target")"
+    docker rm -f "boot-$target" >/dev/null 2>&1 || true
+    printf '%s\n' "$ms" >>"/tmp/boottime-$target.ms"
+    printf '%s\n' "${mib%MiB}" >>"/tmp/boottime-$target.mib"
+    printf '  %-14s round=%s  %6s ms  %10s\n' "$target" "$round" "$ms" "$mib"
+    if [[ -n $OUT ]]; then
+      printf '  %-14s round=%s  %6s ms  %10s\n' "$target" "$round" "$ms" "$mib" >>"$OUT/rounds.txt"
+    fi
+  done
+done
+
+echo
+printf '%-14s %10s %10s\n' target boot_ms idle_mib
+for target in ${TARGETS//,/ }; do
+  boot="$(median_of <"/tmp/boottime-$target.ms")"
+  idle="$(median_of <"/tmp/boottime-$target.mib")"
+  printf '%-14s %10s %10s\n' "$target" "$boot" "$idle"
+  if [[ -n $OUT ]]; then
+    printf '%s\t%s\t%s\n' "$target" "$boot" "$idle" >>"$OUT/boot.tsv"
+  fi
+  rm -f "/tmp/boottime-$target.ms" "/tmp/boottime-$target.mib"
+done
+
+if [[ -n $OUT ]]; then
+  echo
+  echo "saved: $OUT/boot.tsv, $OUT/rounds.txt"
+fi
+
+if (( FAILED )); then
+  echo "bin/boottime: at least one attempt did not answer" >&2
+  exit 1
+fi

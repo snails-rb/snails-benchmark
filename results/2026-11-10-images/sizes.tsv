@@ -1,0 +1,4 @@
+image	bytes	size_mib	note
+snails:bench	145355800	138	unchanged across builds
+rails-api:bench	444989391	424	build used for the throughput and launch runs
+rails-api:bench	436842355	416	rebuilt later; the base image tag had moved

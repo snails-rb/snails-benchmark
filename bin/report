@@ -1,0 +1,70 @@
+#!/bin/bash
+# Print the median table for a finished run without measuring anything again.
+#
+# A measurement run can be long; re-reading its numbers must not mean re-running
+# it. This reads results/<dir>/summary.tsv and prints the same table `bin/bench`
+# ends with.
+#
+# Usage: bin/report [RESULT_DIR] [--json]
+#
+#   RESULT_DIR  directory holding summary.tsv (default: newest under results/)
+#   --json      print the medians as JSON instead of a table
+#
+# Exit: 0 when the table printed; 1 when the directory or summary is missing.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AS_JSON=0
+DIR=""
+
+while (($#)); do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    -h|--help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) DIR="$1"; shift ;;
+  esac
+done
+
+if [[ -z $DIR ]]; then
+  DIR="$(find "$ROOT/results" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)"
+fi
+[[ -n $DIR ]] || { echo "bin/report: no result directory under $ROOT/results" >&2; exit 1; }
+SUMMARY="$DIR/summary.tsv"
+[[ -f $SUMMARY ]] || { echo "bin/report: $SUMMARY not found" >&2; exit 1; }
+
+# Median of the numbers on stdin. Repeated rounds are the sample; with one round
+# the sample is one number and it is reported as-is.
+median_of() {
+  sort -n | awk '{ v[NR] = $1 } END { if (NR == 0) print "nan"; else print v[int((NR + 1) / 2)] }'
+}
+
+if (( AS_JSON )); then
+  printf '[\n'
+  first=1
+  LC_ALL=C awk -F'\t' 'NR > 1 { print $1 "\t" $2 }' "$SUMMARY" \
+    | sort -u -t$'\t' -k1,1 -k2,2n \
+    | while IFS=$'\t' read -r t v; do
+    rps="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $4 }' "$SUMMARY" | median_of)"
+    p50="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $5 }' "$SUMMARY" | median_of)"
+    p95="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $6 }' "$SUMMARY" | median_of)"
+    p99="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $7 }' "$SUMMARY" | median_of)"
+    (( first )) || printf ',\n'
+    first=0
+    printf '  {"target": "%s", "vus": %s, "rps": %.1f, "p50_ms": %.2f, "p95_ms": %.2f, "p99_ms": %.2f}' \
+      "$t" "$v" "$rps" "$p50" "$p95" "$p99"
+  done
+  printf '\n]\n'
+  exit 0
+fi
+
+rounds="$(awk -F'\t' 'NR > 1 { print $3 }' "$SUMMARY" | sort -u | wc -l)"
+printf '[report] %s — %s target/VU pairs, %s round(s)\n' "$DIR" \
+  "$(awk -F'\t' 'NR > 1 { print $1 " " $2 }' "$SUMMARY" | sort -u | wc -l)" "$rounds"
+printf '%-22s %5s %10s %9s %9s %9s\n' target vus rps p50_ms p95_ms p99_ms
+awk -F'\t' 'NR > 1 { print $1 "\t" $2 }' "$SUMMARY" | sort -u | while IFS=$'\t' read -r t v; do
+  rps="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $4 }' "$SUMMARY" | median_of)"
+  p50="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $5 }' "$SUMMARY" | median_of)"
+  p95="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $6 }' "$SUMMARY" | median_of)"
+  p99="$(awk -F'\t' -v t="$t" -v v="$v" '$1 == t && $2 == v { print $7 }' "$SUMMARY" | median_of)"
+  printf '%-22s %5s %10.0f %9.2f %9.2f %9.2f\n' "$t" "$v" "$rps" "$p50" "$p95" "$p99"
+done | sort -k1,1 -k2,2n
