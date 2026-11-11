@@ -196,7 +196,8 @@ start_target() {
     snails-no-logging)
       # Same app with the per-request log line suppressed, at the same worker
       # count as `snails`. The difference against `snails` is the logging cost,
-      # which is the second variable this suite separates.      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
+      # which is the second variable this suite separates.
+      docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
         -e SNAILS_LOG_LEVEL=fatal \
         -p "127.0.0.1:$port:3000" snails:bench >/dev/null
       ;;
