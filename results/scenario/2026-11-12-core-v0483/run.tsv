@@ -1,0 +1,2 @@
+suite	scenario	duration	rounds	vus	targets	logging	server_cpus	load_cpus
+scenario	item-read	15s	3	32	baseline,snails,rails-cluster	off	4-15	0-3

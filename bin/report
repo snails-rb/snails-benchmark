@@ -26,7 +26,9 @@ while (($#)); do
 done
 
 if [[ -z $DIR ]]; then
-  DIR="$(find "$ROOT/results" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)"
+  # Both suites write under results/<suite>/<run>/, so find the newest run
+  # anywhere below results rather than only the top-level directories.
+  DIR="$(find "$ROOT/results" -name summary.tsv -printf '%h\n' 2>/dev/null | sort | tail -1)"
 fi
 [[ -n $DIR ]] || { echo "bin/report: no result directory under $ROOT/results" >&2; exit 1; }
 SUMMARY="$DIR/summary.tsv"

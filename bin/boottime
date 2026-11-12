@@ -18,7 +18,7 @@
 #
 #   --repeat N        rounds per target (default: 5, median reported)
 #   --targets LIST    subset of snails,rails-default,rails-cluster (default: all)
-#   --cpus S          coreset for the container (default: 4-15)
+#   --cpus S          coreset for the container (default: SERVER_CPUS or all but 0-3)
 #   --out DIR         result directory; writes boot.tsv and rounds.txt into it
 #
 # Exit: 0 when every attempt answered; 1 otherwise.
@@ -26,8 +26,27 @@ set -euo pipefail
 
 REPEAT=5
 TARGETS="snails,rails-default,rails-cluster"
-CPUS="${SERVER_CPUS:-4-15}"
+TOTAL_CPUS="$(nproc)"
+CPUS="${SERVER_CPUS:-4-$((TOTAL_CPUS - 1))}"
 OUT=""
+
+cpuset_count() {
+  local set="$1" part start end count=0
+  IFS=',' read -ra parts <<<"$set"
+  for part in "${parts[@]}"; do
+    if [[ $part =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      start=${BASH_REMATCH[1]}
+      end=${BASH_REMATCH[2]}
+      (( end >= start )) || return 1
+      (( count += end - start + 1 ))
+    elif [[ $part =~ ^[0-9]+$ ]]; then
+      (( count += 1 ))
+    else
+      return 1
+    fi
+  done
+  printf '%s' "$count"
+}
 
 # A fixed dummy key: the Rails app needs one to boot in production mode and this
 # measurement never leaves the machine.
@@ -44,6 +63,16 @@ while (($#)); do
   esac
 done
 
+WORKERS="$(cpuset_count "$CPUS")" || {
+  echo "bin/boottime: invalid cpuset: $CPUS" >&2
+  exit 1
+}
+(( WORKERS > 0 )) || {
+  echo "bin/boottime: cpuset names no CPUs: $CPUS" >&2
+  exit 1
+}
+
+
 # Wrapper script the container runs instead of its CMD. `$1` is the server
 # command; the elapsed milliseconds land in /tmp/boot_ms for the host to read.
 # The container then waits, so the host can read memory from the same process.
@@ -51,7 +80,7 @@ READY_WRAPPER='
   start=$(date +%s%N)
   exec_cmd="$1"
   sh -c "$exec_cmd" >/dev/null 2>&1 &
-  until curl -fsS http://127.0.0.1:3000/up >/dev/null 2>&1; do :; done
+  until curl -fsS http://127.0.0.1:3000/up >/dev/null 2>&1; do sleep 0.01; done
   end=$(date +%s%N)
   echo $(( (end - start) / 1000000 )) >/tmp/boot_ms
   wait
@@ -67,14 +96,15 @@ start_container() {
       ;;
     rails-default)
       docker run -d --name "$name" --cpuset-cpus "$CPUS" \
-        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=5 -e SECRET_KEY_BASE="$SECRET" \
+        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=3 -e SECRET_KEY_BASE="$SECRET" \
         --entrypoint sh rails-api:bench -c "$READY_WRAPPER" sh "bundle exec puma -C config/puma.rb" >/dev/null
       ;;
     rails-cluster)
-      # Rails in the shape it needs to use several cores: one worker per core.
-      # Every worker is a process a deployment pays memory for.
+      # Rails in the shape it needs to use several cores: one worker per
+      # hardware thread, five threads each. Five is Puma's default max, not
+      # Rails' generated default of 3; the cluster label keeps that visible.
       docker run -d --name "$name" --cpuset-cpus "$CPUS" \
-        -e WEB_CONCURRENCY=12 -e RAILS_MAX_THREADS=5 -e SECRET_KEY_BASE="$SECRET" \
+        -e WEB_CONCURRENCY="$WORKERS" -e RAILS_MAX_THREADS=5 -e SECRET_KEY_BASE="$SECRET" \
         --entrypoint sh rails-api:bench -c "$READY_WRAPPER" sh "bundle exec puma -C config/puma.rb" >/dev/null
       ;;
     *) echo "bin/boottime: unknown target: $target" >&2; return 1 ;;
@@ -101,7 +131,7 @@ wait_for_boot() {
     if [[ -z $(docker ps --filter "name=^boot-$target$" --format '{{.Names}}') ]]; then
       return 1
     fi
-    sleep 0.05
+    sleep 0.1
   done
   return 1
 }

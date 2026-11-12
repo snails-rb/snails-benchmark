@@ -1,0 +1,4 @@
+target	mem_usage	mem_pct	cpu_pct	pids
+baseline	10.46MiB / 14.92GiB	0.07%	0.00%	13
+snails	36.43MiB / 14.92GiB	0.24%	1.22%	23
+rails-cluster	1.159GiB / 14.92GiB	7.77%	0.08%	159

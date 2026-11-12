@@ -1,0 +1,4 @@
+target	boot_ms	idle_mib
+snails	9	13.93
+rails-default	1008	94.63
+rails-cluster	1033	163
