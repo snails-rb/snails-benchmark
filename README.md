@@ -127,8 +127,9 @@ bootsnap were added. Launch is the noisiest figure here: read the ratio, not
 the millisecond value.
 
 Peak memory is a cgroup high-water mark, not a clean per-condition peak. On
-this run the 32-connection ratio is about 23× in the micro suite and 27× in
-the scenario suite; treat it as a shape and a range, not a precise claim.
+this run the 32-connection ratio is about 19× in the release micro headline
+and 27× in the scenario; the older full micro sweep's peak was 23×. Treat it
+as a shape and a range, not a precise claim.
 
 The 2026-11-10 micro run under `results/micro/2026-11-10-*` predates the
 fairness changes (jemalloc, bootsnap precompile, `preload_app!`, and the
