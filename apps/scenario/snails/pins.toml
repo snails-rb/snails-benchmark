@@ -1,0 +1,14 @@
+# Tool pins — flat TOML: every value is a quoted string; no tables, no arrays.
+# `snails sync` discovers this file and `snails verify-pin` validates it.
+SPINEL_REV="858dde41b"
+
+# Core commit — the vendored snails-core/ must match it.
+SNALS_REV="e18e17b74455070525d8d20f668e311d2e366aa9"
+
+# Build source — "pin" vendors SNALS_REV; "checkout" vendors the core
+# checkout's working tree, so a build compiles it as it stands.
+SNALS_SOURCE="pin"
+
+# App identity — dev database and container names derive from it, never the
+# directory name.
+APP_NAME="snails-scenario"

@@ -86,9 +86,6 @@ ENV DATABASE_PATH=/snails/storage/production.sqlite3
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/up" >/dev/null || exit 1
-
 LABEL snails.rev="${SNALS_REV}" \
       snails.spinel_rev="${SPINEL_REV}"
 

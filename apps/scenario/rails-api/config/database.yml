@@ -1,0 +1,21 @@
+# The benchmark database is built into the image from the Snails app's
+# db/schema.sql and db/seed.sql. Each container gets a fresh copy, so a run
+# cannot change the fixture; the app itself declares only the read route.
+# SQLite still needs the file writable for its connection setup and WAL, so
+# readonly is not used here.
+default: &default
+  adapter: sqlite3
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 3 } %>
+  timeout: 5000
+
+development:
+  <<: *default
+  database: storage/bench.sqlite3
+
+test:
+  <<: *default
+  database: storage/bench.sqlite3
+
+production:
+  <<: *default
+  database: storage/bench.sqlite3

@@ -1,19 +1,34 @@
 # Build outputs and runtime state — regenerated, never source.
-/apps/snails/snails-core/
-/apps/snails/.spinel/
-/apps/snails/build/
-/apps/snails/storage/
-/apps/snails/tmp/
-/apps/snails/.env
-/apps/snails/harness/build/
-/apps/snails/harness/storage/
-/apps/rails-api/tmp/
-/apps/rails-api/log/
-/apps/rails-api/storage/
-/apps/rails-api/.bundle/
-/apps/rails-api/vendor/bundle/
-/apps/rails-api/config/master.key
-/apps/rails-api/config/credentials.yml.enc
+/apps/micro/snails/snails-core/
+/apps/micro/snails/.spinel/
+/apps/micro/snails/build/
+/apps/micro/snails/storage/
+/apps/micro/snails/tmp/
+/apps/micro/snails/.env
+/apps/micro/snails/harness/build/
+/apps/micro/snails/harness/storage/
+/apps/micro/rails-api/tmp/
+/apps/micro/rails-api/log/
+/apps/micro/rails-api/storage/
+/apps/micro/rails-api/.bundle/
+/apps/micro/rails-api/vendor/bundle/
+/apps/micro/rails-api/config/master.key
+/apps/micro/rails-api/config/credentials.yml.enc
+/apps/scenario/snails/snails-core/
+/apps/scenario/snails/.spinel/
+/apps/scenario/snails/build/
+/apps/scenario/snails/storage/
+/apps/scenario/snails/tmp/
+/apps/scenario/snails/.env
+/apps/scenario/snails/harness/build/
+/apps/scenario/snails/harness/storage/
+/apps/scenario/rails-api/tmp/
+/apps/scenario/rails-api/log/
+/apps/scenario/rails-api/storage/
+/apps/scenario/rails-api/.bundle/
+/apps/scenario/rails-api/vendor/bundle/
+/apps/scenario/rails-api/config/master.key
+/apps/scenario/rails-api/config/credentials.yml.enc
 
 # Results: the measured numbers are the evidence for what the README claims, so
 # the two small tables are committed and the bulky k6 output is not.

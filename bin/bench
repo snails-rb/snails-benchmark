@@ -227,8 +227,8 @@ stop_target() {
 
 if (( BUILD )); then
   echo "[bench] building images"
-  ( cd "$ROOT/apps/snails" && bin/build-image --tag bench >/dev/null )
-  ( cd "$ROOT/apps/rails-api" && docker build -q -t rails-api:bench . >/dev/null )
+  ( cd "$ROOT/apps/micro/snails" && bin/build-image --tag bench >/dev/null )
+  ( cd "$ROOT/apps/micro/rails-api" && docker build -q -t rails-api:bench . >/dev/null )
 fi
 
 echo "[bench] host: $TOTAL_CPUS cores, servers on $SERVER_CPUS, load on $LOAD_CPUS"
