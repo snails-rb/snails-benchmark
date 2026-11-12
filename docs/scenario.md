@@ -69,12 +69,14 @@ JSON body before load, then the hot loop runs without checks.
 
 ## Results
 
-The current item-read run is `results/scenario/2026-11-12`; its medians are in
-the root README. `summary.tsv`, `memory.tsv`, `run.tsv`, `db.tsv`, and the raw
-k6 output are written together, so a later reader can re-check the query plan
-and the exact run settings. At 32 connections the ratio is 1.52× (14,280 vs
-9,366 RPS); the database path is the shared bottleneck, so the application
-scenario is narrower than the `/up` microbenchmark.
+The current item-read run is `results/scenario/2026-11-12-core-858`, with the
+release-image 32-connection recheck in `results/scenario/2026-11-12-core-v0483`;
+their medians are in the root README. `summary.tsv`, `memory.tsv`, `run.tsv`,
+`db.tsv`, and the raw k6 output are written together, so a later reader can
+re-check the query plan and the exact run settings. At 32 connections the ratio
+is 3.09× (35,610 vs 11,509 RPS); the single-row read is no longer narrower than
+the `/up` microbenchmark, so the framework's relative throughput holds up on
+this database path.
 
 ## What it measures
 

@@ -1,0 +1,10 @@
+target	vus	round	rps	p50_ms	p95_ms	p99_ms	failed_pct	peak_mib
+snails-no-logging	32	1	52304.1	0.48	1.25	2.15	0.00	36
+rails-cluster-no-logging	32	1	17311.6	1.44	4.24	6.45	0.00	726
+baseline	32	1	78720.6	0.28	0.96	1.86	0.00	20
+baseline	32	2	78528.7	0.28	0.96	1.85	0.00	20
+snails-no-logging	32	2	51307.2	0.48	1.31	2.39	0.00	39
+rails-cluster-no-logging	32	2	17262.1	1.44	4.28	6.52	0.00	721
+rails-cluster-no-logging	32	3	17265.6	1.38	4.51	7.28	0.00	724
+baseline	32	3	78428.5	0.28	0.96	1.79	0.00	20
+snails-no-logging	32	3	51840.1	0.48	1.29	2.28	0.00	38

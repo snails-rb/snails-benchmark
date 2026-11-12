@@ -78,27 +78,37 @@ answered 11.9×. At 128 connections the full sweep put the cluster ratio at
 baseline is 80,964 RPS at 32 connections, so Snails is at 63% of the
 generator/HTTP ceiling and Rails cluster at 20%; neither is generator-bound.
 
+After the core update, a release-image headline-only recheck at 32 connections
+(`results/micro/2026-11-12-core-v0483-headline`) measured 51,840 vs 17,266 RPS
+(3.00×). The full sweep stays as the table because `/up` does not touch the
+changed database path.
+
 All figures belong to this host. The micro route is a no-op; see
 [What each suite measures](#what-each-suite-measures).
 
 ### Scenario
 
-Medians over three 15-second rounds from `results/scenario/2026-11-12`.
+Medians over three 15-second rounds from `results/scenario/2026-11-12-core-858`.
 
 | target | 8 | 32 | 64 | 128 | p95 at 32 | peak at 32 |
 |---|---:|---:|---:|---:|---:|---:|
-| baseline | 55,580 | 53,606 | 51,416 | 48,136 | 1.61 ms | 17 MiB |
-| snails | 14,962 | 14,280 | 15,039 | 14,533 | 5.26 ms | 126 MiB |
-| rails-cluster | 9,079 | 9,366 | 10,315 | 10,337 | 7.92 ms | 1,179 MiB |
+| baseline | 57,189 | 63,930 | 56,459 | 53,725 | 1.42 ms | 25 MiB |
+| snails | 27,885 | 35,610 | 33,362 | 30,947 | 1.87 ms | 44 MiB |
+| rails-cluster | 11,745 | 11,509 | 11,665 | 12,425 | 6.46 ms | 1,209 MiB |
 
-At 32 connections, Snails answered **1.52×** the requests of the Rails cluster
-(14,280 vs 9,366 RPS), with p95 5.26 ms vs 7.92 ms and peak memory 126 MiB vs
-1,179 MiB (9.4×). The ratio is 1.65× at 8, 1.46× at 64, and 1.41× at 128:
-the primary-key read includes the same database work on both sides, and the
-database becomes the shared bottleneck. The baseline is 53,606 RPS at 32
-connections; Snails is at 27% and Rails at 17%, so neither is generator-bound.
-This is the application-scenario answer, and it is narrower than the `/up`
-microbenchmark’s 3×.
+At 32 connections, Snails answered **3.09×** the requests of the Rails cluster
+(35,610 vs 11,509 RPS), with p95 1.87 ms vs 6.46 ms and peak memory 44 MiB vs
+1,209 MiB (27.5×). The ratio is 2.37× at 8, 2.86× at 64, and 2.49× at 128.
+The primary-key read is no longer a narrow exception: the ratio is close to
+the `/up` microbenchmark's 3×. The baseline is 63,930 RPS at 32 connections;
+Snails is at 56% and Rails at 18%, so neither is generator-bound.
+
+A release-image recheck at 32 connections (`results/scenario/2026-11-12-core-v0483`)
+put Snails at 35,897 and Rails at 11,531, the same 3.11× ratio. A paired 32-connection
+micro headline on the release image (`results/micro/2026-11-12-core-v0483-headline`)
+measured 51,840 vs 17,266 RPS. The RPS drop from micro to scenario is therefore
+30.8% for Snails and 33.2% for Rails: the database path no longer narrows the
+framework's relative throughput.
 
 ### Boot and image
 
@@ -116,11 +126,9 @@ and 467 MiB for `rails-api:bench`; the Rails image grew after jemalloc and
 bootsnap were added. Launch is the noisiest figure here: read the ratio, not
 the millisecond value.
 
-Peak memory is a cgroup high-water mark, not a clean per-condition peak. Across
-the micro and scenario runs, the 32-connection ratio ranges from about 9×
-(scenario, where the Snails container has accumulated more high-water memory)
-to 23× (micro full sweep); treat it as a shape and a range, not a precise
-claim.
+Peak memory is a cgroup high-water mark, not a clean per-condition peak. On
+this run the 32-connection ratio is about 23× in the micro suite and 27× in
+the scenario suite; treat it as a shape and a range, not a precise claim.
 
 The 2026-11-10 micro run under `results/micro/2026-11-10-*` predates the
 fairness changes (jemalloc, bootsnap precompile, `preload_app!`, and the
