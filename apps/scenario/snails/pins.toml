@@ -3,7 +3,7 @@
 SPINEL_REV="858dde41b"
 
 # Core commit — the vendored snails-core/ must match it.
-SNALS_REV="v0.48.3"
+SNALS_REV="v1.0.0-rc.1"
 
 # Build source — "pin" vendors SNALS_REV; "checkout" vendors the core
 # checkout's working tree, so a build compiles it as it stands.
