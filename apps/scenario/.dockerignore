@@ -1,0 +1,17 @@
+# Build context for the Rails scenario image (apps/scenario). The Dockerfile
+# copies rails-api/ and the shared SQL fixture under snails/db/. Exclude the
+# Snails app's local build state, which can be hundreds of megabytes.
+snails/.spinel
+snails/build
+snails/snails-core
+snails/storage
+snails/tmp
+snails/harness/build
+snails/harness/storage
+rails-api/.bundle
+rails-api/log
+rails-api/storage
+rails-api/tmp
+rails-api/vendor/bundle
+rails-api/config/master.key
+rails-api/config/credentials.yml.enc
