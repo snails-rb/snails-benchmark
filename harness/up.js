@@ -18,5 +18,5 @@ export const options = {
 };
 
 export default function () {
-  http.get(__ENV.URL || 'http://127.0.0.1:18080/up');
+  http.get(__ENV.URL || 'http://127.0.0.1:18080/up', { redirects: 0 });
 }

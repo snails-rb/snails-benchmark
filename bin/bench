@@ -17,8 +17,8 @@
 #   --repeat N        rounds over every target and VU level (default: 3)
 #   --build           rebuild both app images first
 #   --server-cpus S   coreset for the server containers (default: all but load)
-#   --load-cpus S     coreset for the generator (default: first 4 cores)
-#   --out DIR         result directory (default: results/<UTC timestamp>)
+#   --load-cpus S     coreset for the generator (default: hardware threads 0-3)
+#   --out DIR         result directory (default: results/micro/<UTC timestamp>)
 #
 # Exit: 0 when every measurement ran and no request failed; 1 otherwise.
 set -euo pipefail
@@ -27,7 +27,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HARNESS="$ROOT/harness/up.js"
 OUT="${OUT:-}"
 
-TARGETS="baseline,snails,snails-single-worker,rails-default,rails-cluster"
+TARGETS="baseline,snails,snails-single-worker,rails-default,rails-cluster,snails-no-logging,rails-default-no-logging,rails-cluster-no-logging"
 VUS_LIST="8,32,64,128"
 DURATION="20s"
 REPEAT=3
@@ -68,6 +68,54 @@ while (($#)); do
 done
 
 TOTAL_CPUS="$(nproc)"
+
+# Count the logical CPUs named by a Linux cpuset string such as "4-15" or
+# "0,4-7". Docker accepts the same shape, so a --server-cpus override must
+# drive the Rails worker count rather than the host's total.
+cpuset_count() {
+  local set="$1" part start end count=0
+  IFS=',' read -ra parts <<<"$set"
+  for part in "${parts[@]}"; do
+    if [[ $part =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      start=${BASH_REMATCH[1]}
+      end=${BASH_REMATCH[2]}
+      (( end >= start )) || return 1
+      (( count += end - start + 1 ))
+    elif [[ $part =~ ^[0-9]+$ ]]; then
+      (( count += 1 ))
+    else
+      return 1
+    fi
+  done
+  printf '%s' "$count"
+}
+
+cpuset_contains() {
+  local set="$1" wanted="$2" part start end cpu
+  IFS=',' read -ra parts <<<"$set"
+  for part in "${parts[@]}"; do
+    if [[ $part =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      start=${BASH_REMATCH[1]}
+      end=${BASH_REMATCH[2]}
+      for ((cpu = start; cpu <= end; cpu++)); do
+        [[ $cpu == "$wanted" ]] && return 0
+      done
+    elif [[ $part =~ ^[0-9]+$ && $part == "$wanted" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+require_disjoint_cpusets() {
+  local load_set="$1" server_set="$2" cpu
+  for ((cpu = 0; cpu < TOTAL_CPUS; cpu++)); do
+    if cpuset_contains "$load_set" "$cpu" && cpuset_contains "$server_set" "$cpu"; then
+      echo "bin/bench: load and server cpusets overlap on CPU $cpu" >&2
+      return 1
+    fi
+  done
+}
 for cmd in docker jq curl taskset; do
   command -v "$cmd" >/dev/null 2>&1 || {
     echo "bin/bench: $cmd is required" >&2
@@ -80,10 +128,33 @@ if (( TOTAL_CPUS < 8 )); then
 fi
 LOAD_CPUS="${LOAD_CPUS:-0-3}"
 SERVER_CPUS="${SERVER_CPUS:-4-$((TOTAL_CPUS - 1))}"
-SERVER_CORE_COUNT=$(( TOTAL_CPUS - 4 ))
-OUT="${OUT:-$ROOT/results/$(date -u +%Y%m%dT%H%M%SZ)}"
+LOAD_CORE_COUNT="$(cpuset_count "$LOAD_CPUS")" || {
+  echo "bin/bench: invalid --load-cpus: $LOAD_CPUS" >&2
+  exit 1
+}
+SERVER_CORE_COUNT="$(cpuset_count "$SERVER_CPUS")" || {
+  echo "bin/bench: invalid --server-cpus: $SERVER_CPUS" >&2
+  exit 1
+}
+if (( LOAD_CORE_COUNT < 1 || SERVER_CORE_COUNT < 1 )); then
+  echo "bin/bench: --load-cpus and --server-cpus must each name at least one CPU" >&2
+  exit 1
+fi
+require_disjoint_cpusets "$LOAD_CPUS" "$SERVER_CPUS" || exit 1
+DURATION_S="${DURATION%s}"
+[[ $DURATION_S =~ ^[0-9]+$ ]] || {
+  echo "bin/bench: --duration must be a whole number of seconds (for example 15s)" >&2
+  exit 2
+}
+OUT="${OUT:-$ROOT/results/micro/$(date -u +%Y%m%dT%H%M%SZ)}"
 
 mkdir -p "$OUT/raw"
+
+{
+  printf 'suite\tduration\trounds\tvus\ttargets\tserver_cpus\tload_cpus\n'
+  printf 'micro\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$DURATION" "$REPEAT" "$VUS_LIST" "$TARGETS" "$SERVER_CPUS" "$LOAD_CPUS"
+} >"$OUT/run.tsv"
 
 # k6 from mise keeps the generator version constant; the pinned minor is the
 # one the earlier staging measurements used.
@@ -179,15 +250,18 @@ start_target() {
         -p "127.0.0.1:$port:3000" snails:bench >/dev/null
       ;;
     rails-default)
-      # `rails new` defaults: one process, five threads.
+      # `rails new` defaults: one process, three threads. Rails 8.1's generated
+      # puma.rb defaults to 3; Puma's own max is 5 but that is a tuned value.
       docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
-        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=5 \
+        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=3 \
         -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
         -p "127.0.0.1:$port:3000" rails-api:bench >/dev/null
       ;;
     rails-cluster)
-      # One worker per server core: what it takes for CRuby to use the cores,
-      # because a worker's threads share one GVL.
+      # One worker per server hardware thread: what it takes for CRuby to use
+      # the cores, because a worker's threads share one GVL. Five threads is
+      # Puma's default max, not Rails' generated default of 3; the label says
+      # "cluster, 5 threads" so the distinction stays visible.
       docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
         -e WEB_CONCURRENCY="$SERVER_CORE_COUNT" -e RAILS_MAX_THREADS=5 \
         -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
@@ -202,15 +276,15 @@ start_target() {
         -p "127.0.0.1:$port:3000" snails:bench >/dev/null
       ;;
     rails-default-no-logging)
-      # The `rails-default` shape with log output off.
+      # The `rails-default` shape (three threads) with log output off.
       docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
-        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=5 \
+        -e WEB_CONCURRENCY=0 -e RAILS_MAX_THREADS=3 \
         -e RAILS_LOG_LEVEL=fatal \
         -e SECRET_KEY_BASE=benchmark-only-not-a-deployment-secret-0000000000 \
         -p "127.0.0.1:$port:3000" rails-api:bench >/dev/null
       ;;
     rails-cluster-no-logging)
-      # The `rails-cluster` shape with log output off.
+      # The `rails-cluster` shape (12 workers x 5 threads) with log output off.
       docker run -d --name "bench-$target" --cpuset-cpus "$SERVER_CPUS" \
         -e WEB_CONCURRENCY="$SERVER_CORE_COUNT" -e RAILS_MAX_THREADS=5 \
         -e RAILS_LOG_LEVEL=fatal \
@@ -227,8 +301,8 @@ stop_target() {
 
 if (( BUILD )); then
   echo "[bench] building images"
-  ( cd "$ROOT/apps/micro/snails" && bin/build-image --tag bench >/dev/null )
-  ( cd "$ROOT/apps/micro/rails-api" && docker build -q -t rails-api:bench . >/dev/null )
+  ( cd "$ROOT/apps/snails" && bin/build-image --tag bench >/dev/null )
+  ( cd "$ROOT/apps/rails-api" && docker build -q -t rails-api:bench . >/dev/null )
 fi
 
 echo "[bench] host: $TOTAL_CPUS cores, servers on $SERVER_CPUS, load on $LOAD_CPUS"
@@ -247,7 +321,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for target in ${TARGETS//,/ }; do
+IFS=',' read -ra TARGET_LIST <<<"$TARGETS"
+TARGET_COUNT=${#TARGET_LIST[@]}
+(( TARGET_COUNT > 0 )) || {
+  echo "bin/bench: --targets must name at least one target" >&2
+  exit 2
+}
+
+for target in "${TARGET_LIST[@]}"; do
   echo "[bench] starting $target"
   if ! start_target "$target"; then
     echo "[bench] $target did not become ready — skipping" >&2
@@ -265,17 +346,21 @@ done
 sleep 3
 
 # Rounds are the outer loop so every target sees the same machine state within
-# a round: a slow drift (thermal, background job) hits all of them equally.
+# a round. The target order rotates per round and VU level, so a slow within-
+# round drift (thermal, background job) is spread across targets instead of
+# always hitting the same one last.
+vus_index=0
 for ((round = 1; round <= REPEAT; round++)); do
   for vus in ${VUS_LIST//,/ }; do
-    for target in ${TARGETS//,/ }; do
+    for ((order = 0; order < TARGET_COUNT; order++)); do
+      target="${TARGET_LIST[$(( (order + round + vus_index) % TARGET_COUNT ))]}"
       port="${PORTS[$target]:-}"
       [[ -n $port ]] || continue
       [[ -n $(docker ps --filter "name=^bench-$target$" --format '{{.Names}}') ]] || continue
       name="$target-vus$vus-round$round"
       # Peak memory is sampled while the load runs; a reading after it stops
       # would show what the app kept, which is a different question.
-      start_memory_sampler "$target" "${DURATION%s}"
+      start_memory_sampler "$target" "$DURATION_S"
       if ! run_k6 "http://127.0.0.1:$port/up" "$vus" "$name"; then
         echo "[bench] $name failed — see raw/$name.log" >&2
         wait "$SAMPLER_PID" 2>/dev/null || true
@@ -301,6 +386,7 @@ for ((round = 1; round <= REPEAT; round++)); do
       printf '  %-22s round=%s vus=%-4s %9.1f rps  p50=%6.2fms p95=%8.2fms  peak=%4s MiB\n' \
         "$target" "$round" "$vus" "$rps" "$p50" "$p95" "$peak_mib"
     done
+    vus_index=$((vus_index + 1))
   done
 done
 

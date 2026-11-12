@@ -1,0 +1,2 @@
+suite	duration	rounds	vus	targets	server_cpus	load_cpus
+micro	15s	3	8,32,64,128	baseline,snails-no-logging,rails-cluster-no-logging	4-15	0-3

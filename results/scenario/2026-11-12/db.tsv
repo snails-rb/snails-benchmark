@@ -1,0 +1,2 @@
+target	plan
+snails	QUERY PLAN;`--SEARCH items USING INTEGER PRIMARY KEY (rowid=?)

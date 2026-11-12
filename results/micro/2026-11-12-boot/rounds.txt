@@ -1,0 +1,15 @@
+  snails         round=1      39 ms    13.93MiB
+  rails-default  round=1    1444 ms    95.25MiB
+  rails-cluster  round=1    1013 ms    163.5MiB
+  snails         round=2       9 ms    14.05MiB
+  rails-default  round=2    1008 ms    94.38MiB
+  rails-cluster  round=2     963 ms    160.6MiB
+  snails         round=3       8 ms     14.6MiB
+  rails-default  round=3     984 ms     94.5MiB
+  rails-cluster  round=3    1050 ms    163.3MiB
+  snails         round=4       8 ms    13.66MiB
+  rails-default  round=4     965 ms    94.63MiB
+  rails-cluster  round=4    1048 ms    161.5MiB
+  snails         round=5      10 ms    13.75MiB
+  rails-default  round=5    1102 ms    94.97MiB
+  rails-cluster  round=5    1033 ms      163MiB
