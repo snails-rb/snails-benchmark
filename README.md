@@ -69,13 +69,13 @@ single-worker targets. Full target list and method: [docs/micro.md](docs/micro.m
 | rails-default (logging off) | 4,518 | 4,262 | 4,486 | 4,864 | 11.19 ms | 116 MiB |
 
 At 32 connections, Snails answered **3.14×** the requests of the Rails cluster
-(50,865 vs 16,209 RPS), with p95 1.34 ms vs 4.68 ms. A headline-only run on the
-same images put the same point at 2.90×, inside the run spread; quote “about
-3×”, not a precise 3.1×. Against the three-thread Rails default, Snails
-answered 11.9×. At 128 connections the full sweep put the cluster ratio at
-2.86× (40,985 vs 14,304 RPS), while the headline-only run put it at 2.43×; the
-128-connection point is more queue-sensitive and less stable than 32. The
-baseline is 80,964 RPS at 32 connections, so Snails is at 63% of the
+(50,865 vs 16,209 RPS), with p95 1.34 ms vs 4.68 ms. An earlier headline-only
+run put the same point at 2.90×; a release-image recheck later measured 3.00×.
+Quote “about 3×”, not a precise decimal. Against the three-thread Rails default,
+Snails answered 11.9×. At 128 connections the full sweep put the cluster ratio
+at 2.86× (40,985 vs 14,304 RPS), while the earlier headline-only run put it at
+2.43×; the 128-connection point is more queue-sensitive and less stable than 32.
+The baseline is 80,964 RPS at 32 connections, so Snails is at 63% of the
 generator/HTTP ceiling and Rails cluster at 20%; neither is generator-bound.
 
 After the core update, a release-image headline-only recheck at 32 connections
