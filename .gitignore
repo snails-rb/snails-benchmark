@@ -30,6 +30,6 @@
 /apps/scenario/rails-api/config/master.key
 /apps/scenario/rails-api/config/credentials.yml.enc
 
-# Results: the measured numbers are the evidence for what the README claims, so
-# the two small tables are committed and the bulky k6 output is not.
-/results/*/raw/
+# Results: the measured numbers are the evidence for the README claims, so the
+# summary tables are committed and the bulky k6 output is not.
+/results/**/raw/
