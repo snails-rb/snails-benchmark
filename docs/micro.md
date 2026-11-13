@@ -6,7 +6,7 @@ database, model, view, or job.
 
 ## Targets
 
-| target | shape |
+| target | configuration |
 |---|---|
 | `baseline` | nginx `return 200 '{"status":"ok"}'` |
 | `snails` | one Snails process, one OS worker per server hardware thread |
@@ -17,7 +17,7 @@ database, model, view, or job.
 | `rails-default-no-logging` | `rails-default` with `RAILS_LOG_LEVEL=fatal` |
 | `rails-cluster-no-logging` | `rails-cluster` with `RAILS_LOG_LEVEL=fatal` |
 
-The cluster shape is a tuned comparison, not `rails new`'s default. The
+The cluster configuration is a tuned comparison, not `rails new`'s default. The
 generated puma.rb defaults to three threads; five is Puma's default max and is
 used here to give the cluster a fair thread budget. Every Rails image keeps the
 generated production defaults for jemalloc and bootsnap, and cluster mode uses
@@ -50,10 +50,10 @@ bin/imagesize --out results/micro/<run>-images
 
 ## What it measures
 
-Use this suite for framework request-path overhead, process/thread shape, boot,
-idle memory, and image size. Do not use it for application performance. The
-route is a no-op, and the shared HTTP, kernel, Docker port, and k6 costs are a
-large share of each request.
+Use this suite for framework request-path overhead, the process and thread
+model, boot, idle memory, and image size. Do not use it for application
+performance. The route is a no-op, and the shared HTTP, kernel, Docker port,
+and k6 costs are a large share of each request.
 
 ## Results
 

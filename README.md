@@ -19,7 +19,7 @@ as the other.
 | How fast is a DB-backed API read? | scenario | `bin/bench-scenario` |
 | How fast is a real application? | neither | measure your application |
 
-The micro route is a no-op. Use it for framework and process-shape overhead,
+The micro route is a no-op. Use it for framework and process-model overhead,
 not application performance. The scenario route is one read path, not a
 complete application benchmark. Name the suite, the route, and the connection
 count whenever you quote a number.
@@ -70,9 +70,10 @@ single-worker targets. Full target list and method: [docs/micro.md](docs/micro.m
 
 At 32 connections, Snails answered **3.14×** the requests of the Rails cluster
 (50,865 vs 16,209 RPS), with p95 1.34 ms vs 4.68 ms. An earlier headline-only
-run put the same point at 2.90×; a release-image recheck later measured 3.00×.
+run measured 2.90× at the same point; a release-image recheck later measured
+3.00×.
 Quote “about 3×”, not a precise decimal. Against the three-thread Rails default,
-Snails answered 11.9×. At 128 connections the full sweep put the cluster ratio
+Snails served 11.9×. At 128 connections the full sweep put the cluster ratio
 at 2.86× (40,985 vs 14,304 RPS), while the earlier headline-only run put it at
 2.43×; the 128-connection point is more queue-sensitive and less stable than 32.
 The baseline is 80,964 RPS at 32 connections, so Snails is at 63% of the
@@ -129,7 +130,7 @@ the millisecond value.
 Peak memory is a cgroup high-water mark, not a clean per-condition peak. On
 this run the 32-connection ratio is about 19× in the release micro headline
 and 27× in the scenario; the older full micro sweep's peak was 23×. Treat it
-as a shape and a range, not a precise claim.
+as a range, not a precise claim.
 
 The 2026-11-10 micro run under `results/micro/2026-11-10-*` predates the
 fairness changes (jemalloc, bootsnap precompile, `preload_app!`, and the
@@ -140,7 +141,7 @@ configuration.
 
 ### Micro: `GET /up`
 
-| target | shape |
+| target | configuration |
 |---|---|
 | `baseline` | nginx static `{"status":"ok"}` |
 | `snails` | one Snails process, one OS worker per server hardware thread |
@@ -151,7 +152,7 @@ configuration.
 | `rails-default-no-logging` | `rails-default` with request logging off |
 | `rails-cluster-no-logging` | `rails-cluster` with request logging off |
 
-The cluster shape is a tuned comparison, not `rails new`'s default. Five
+The cluster configuration is a tuned comparison, not `rails new`'s default. Five
 threads is Puma's default max; Rails 8.1's generated puma.rb defaults to three.
 Rails keeps the generated production defaults for jemalloc and bootsnap, and
 cluster mode uses `preload_app!`. See
@@ -220,7 +221,7 @@ docs/                     method, suite pages
 results/                  committed summaries; raw/ stays local
 ```
 
-Both apps answer their route with the same body. The Rails apps differ from
+Both apps return the same body for their route. The Rails apps differ from
 generated defaults in the ways listed in their READMEs.
 
 ## Limitations
@@ -240,7 +241,7 @@ generated defaults in the ways listed in their READMEs.
   arrival rate. Add a `constant-arrival-rate` run before treating it as an SLO.
 - **Peak memory is a high-water mark.** The cgroup counter is not reset between
   measurements, and idle/retained readings use a different metric (working set).
-  Use it for shapes and upper bounds, not per-condition rankings.
+  Use it for ranges and upper bounds, not per-condition rankings.
 - **SQLite scenario.** The v1 scenario uses a small page-cache-resident SQLite
   fixture. A PostgreSQL variant is the same scenario, not a second one.
 - **Raw data is not committed.** `results/**/raw/` is ignored; summaries are

@@ -55,13 +55,13 @@ method names hardware threads, not physical cores.
 - `peak_mib` samples the container's cgroup `memory.current` every 50 ms while
   the load runs. It is a **high-water mark through the sweep**, not a clean
   per-condition peak: the counter is not reset between measurements. Use it to
-  compare shapes and upper bounds, not to rank 32-connection memory against a
+  compare ranges and upper bounds, not to rank 32-connection memory against a
   later 128-connection run.
 - The idle and retained readings use `docker stats` working set, which excludes
   inactive file cache; the peak counter includes page cache. Do not compare a
   peak row with an idle row as if they used one metric.
 - A shorter spike than 50 ms can be missed. These readings are enough to
-  compare shapes, not to judge leaks.
+  compare ranges, not to judge leaks.
 
 ## Boot
 
@@ -80,8 +80,9 @@ Rails 8.1's generated production Dockerfile:
 - jemalloc is preloaded.
 - bootsnap caches are precompiled into the image.
 - cluster mode uses `preload_app!` so workers share copy-on-write pages.
-- `rails-default` uses the generated three-thread default; the cluster shape
-  uses five threads per worker and is labeled as a tuned shape, not a default.
+- `rails-default` uses the generated three-thread default; the cluster
+  configuration uses five threads per worker and is labeled as a tuned
+  configuration, not a default.
 - Thruster is left out because the suites compare the application servers
   directly; the generated Dockerfile would otherwise put a proxy in front of
   Puma.

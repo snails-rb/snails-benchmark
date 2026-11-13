@@ -1,6 +1,6 @@
 # Scenario apps
 
-Two apps answer one benchmark route with the same body:
+Two apps serve one benchmark route with the same body:
 
 ```text
 GET /items/:id -> {"id":..., "name":..., "description":..., "price":..., "status":...}
