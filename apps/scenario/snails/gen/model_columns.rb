@@ -9,6 +9,7 @@ module GeneratedModelColumns
     def date_columns = []
     def boolean_columns = []
     def json_columns = []
+    def integer_columns = %w[id price]
   end
 end
 
@@ -27,3 +28,4 @@ class Item
   extend GeneratedModelColumns::Item
   include GeneratedModelReaders::Item
 end
+

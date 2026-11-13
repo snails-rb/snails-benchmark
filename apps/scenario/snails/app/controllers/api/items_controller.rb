@@ -6,7 +6,7 @@ module Api
   # seeded table, so a miss is outside the measured path.
   class ItemsController < Api::ApplicationController
     def show
-      item = Item.find(params["id"].to_i)
+      item = Item.find(params["id"])
       render(json: {
         "id" => item.id,
         "name" => item.name,
