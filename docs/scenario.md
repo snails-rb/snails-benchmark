@@ -74,7 +74,7 @@ release-image 32-connection recheck in `results/scenario/2026-11-12-core-v0483`;
 their medians are in the root README. `summary.tsv`, `memory.tsv`, `run.tsv`,
 `db.tsv`, and the raw k6 output are written together, so a later reader can
 re-check the query plan and the exact run settings. At 32 connections the ratio
-is 3.09× (35,610 vs 11,509 RPS); the single-row read is no longer narrower than
+is 3.09× (35,610 vs 11,509 RPS); the single-row read is now close to
 the `/up` microbenchmark, so the framework's relative throughput holds up on
 this database path.
 
